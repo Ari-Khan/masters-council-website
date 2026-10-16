@@ -1,0 +1,644 @@
+<html>
+    <style>
+        .hidden { display:none }       
+        .inputTable { width:100%; border-spacing:0 }
+        .inputTable tr { width:100% }
+        .inputTable td { padding:10 }
+        .inputTable td:nth-child(1) { width:20% }
+        .inputTable td:nth-child(2) { width:80% }
+        .outputTable { width:100%; border-spacing:0 }
+        .outputTable tr { width:100% }
+        .outputTable tr:nth-child(even) { background-color:lightgreen }
+        .outputTable tr:nth-child(odd) { background-color:lightgrey }
+        .outputTable td { padding:10; border:1px solid grey }
+        .examTable { width: 100%; border-spacing:0 }
+        .examTable td:nth-child(1) { width:5% }
+        .examTable td:nth-child(2) { width:95% }
+        .submitbutton {width: 30%; font-family: Calibri; font-size: medium;}
+        .settings tr {border-color:red; border-width:1; border-radius:50%; background-color: lightgrey;}
+        .settings tr.settingTitle {background-color: lightblue;}
+        .answerButton {background-color:lightgrey; border-radius: 25px; padding:10px; text-align:left; width:100%; border-width: 1;}
+        .selectableAnswer:hover {background-color: aqua;}
+        .answerCell {width: 20%;}
+        .selectedAnswer {background-color: rgb(144, 203, 238);}
+        .correctAnswer {background-color: green;}
+        .wrongAnswer {background-color: red;}
+    </style>
+    <head>
+
+    </head>
+    <body>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+        <!--script src="./pdf.min.js"></script-->
+        <script>
+            // global variables initializing
+            window.setting = {}
+
+            function blankQuestion( questionNum ) {
+                return { questionNum: questionNum,
+                            questionText: "",
+//                            choiceOpt: [],
+//                            choiceText: [],
+                            choiceText: new Map(),
+                            answerOpt: "",
+                            answerText: "",
+                            answerSources: [],
+
+                            userChoice: ""
+                }
+            } // blankQuestion
+
+            async function parseExam(rows) {
+                const showQuestionTable = document.getElementById("showQuestionTable").checked;
+                let i = 0;
+
+                // Array to store questions
+                questions = [];
+
+                // Parse Questions
+                while ( i<rows.length ) {
+                    // Match Question (cell 0, /\d+\.$/)
+console.log(`looking for start of a question: ${rows[i].cells[0]}`);
+                    if ( rows[i].cells[0].match(/^\d+\.$/) ) {
+                        question = blankQuestion(rows[i].cells[0].match(/(\d+)\.$/)[1]);
+
+                        // Must be start of answers
+                        if ( question.questionNum == 1 && questions.length > 0 ) {
+                            console.log("Found start of answers");
+                            break;
+                        } // if
+
+                        // Parse first line of question
+                        question.questionText = rows[i].cells.slice(1,rows[i].cells.length).join(" ");
+
+                        // Peek ahead until response options
+                        isTable = false;
+                        tableWidth = 0;
+                        while ( ((i+1) < rows.length-1) && ! rows[i+1].cells[0].match(/^[ABCD]\.$/) ) {
+                            // Skip headers and footers
+//                            if ( isSkipHeaderFooter(rows[i+1]) ) {
+//                                console.log(`skip line starting with: ${rows[i+1].cells[0]}`);
+//                            } else {
+                                // If more than 3 columns on secondary row (data + spacer + data), assume a table
+                                if ( false && rows[i+1].cells.length >= 3 ) {
+                                    // Start of table
+                                    if ( ! isTable ) {
+                                        isTable = true;
+                                        // Store number of columns
+                                        tableWidth = rows[i+1].cells.length;
+                                        question.questionText = question.questionText.trim() + "<table>\n";
+                                    } // if 
+
+                                    // Change of table since number of columns changed
+                                    if ( tableWidth != rows[i+1].cells.length ) {
+                                        tableWidth = rows[i+1].cells.length;
+                                        question.questionText = question.questionText.trim() + "</table><table>\n";
+                                    } // if
+
+                                    // Add table row
+                                    question.questionText = question.questionText.trim() + 
+                                                                "<tr><td>" + rows[i+1].cells.join("</td><td>") + "</td></tr>\n";
+                                } else {
+                                    // End of table
+                                    if ( isTable ) {
+                                        question.questionText = question.questionText.trim() + "</table>\n";
+                                        isTable = false;
+                                    } // if
+
+                                    // Add regular row
+                                question.questionText = question.questionText.trim() + " " + rows[i+1].cells.join(" ").trim();
+                                } // if
+//                            } // if 
+                            i++;
+                        } // while
+                        if ( isTable )
+                            question.questionText = question.questionText.trim() + "</table>\n";
+                        i++;
+                        question.questionText = question.questionText.replaceAll("  ", " ").replaceAll(" - ", "-");
+
+                        console.log(`${question.questionNum}: ${question.questionText}`);
+
+                        // Match 4 Answer Options (/^[ABCD]\.$/)
+                        j = 0;
+//                        while ( question.choiceOpt.length < 4 ) {
+                        while ( question.choiceText.size < 4 ) {
+console.log(`${i},${j}: ${rows[i].cells[j]}`);
+                            // Push choice letter
+//                            question.choiceOpt.push(rows[i].cells[j].match(/^([ABCD])\.$/)[1]);
+                            choiceOpt = rows[i].cells[j].match(/^([ABCD])\.$/)[1];
+                            j++;
+
+                            // Build and push choice text
+                            choiceText = "";
+                            while ( (i <= rows.length-1)
+                                    && ! rows[i].cells[j].match(/^[ABCD]\.$/) 
+                                    && ! ( j == 0 && rows[i].cells[j].match(/^\d+\.$/) )) {
+                                choiceText = choiceText.trim() + " " + rows[i].cells[j].trim();
+                                j++;
+                                if ( j == rows[i].cells.length ) {
+                                    i++;
+                                    j = 0;
+
+                                    // Skip headers and footers
+//                                    while ( i<rows.length-1 && isSkipHeaderFooter(rows[i]) )
+//                                        i++;
+                                } // if
+                            } // while
+//                            question.choiceText.push(choiceText);
+                            question.choiceText.set(choiceOpt, choiceText);
+
+//                            console.log(`${question.choiceOpt[question.choiceOpt.length-1]}. ${question.choiceText[question.choiceText.length-1]}`);
+                            console.log(`[${question.choiceText.length}] ${choiceOpt}. ${choiceText}`);
+                        } // while
+
+                        // Store the question
+                        questions.push(question);
+                    } else {
+                        // Discard line
+                        i++;
+                    } // if
+                } // while
+
+                // Parse Answers
+                while ( i<rows.length ) {
+                    // Match Question (cell 0, /\d+\.$/)
+console.log(`looking for start of an answer: ${rows[i].cells[0]}`);
+                    if ( rows[i].cells[0].match(/^\d+\.$/) ) {
+                        questionNum = rows[i].cells[0].match(/(\d+)\.$/)[1];
+                        question = questions[questionNum-1];
+
+                        question.answerOpt = rows[i].cells[2];
+
+                        // Peek ahead until SOURCE 
+                        question.answerText = "";
+                        while ( ((i+1) < rows.length-1) && ! rows[i+1].cells[0].match(/^SOURCE:$/) ) {
+                            // Skip headers and footers
+//                            if ( isSkipHeaderFooter(rows[i+1]) ) {
+//                                console.log(`skip line starting with: ${rows[i+1].cells[0]}`);
+//                            } else {
+                                question.answerText = question.answerText.trim() + " " + rows[i+1].cells.join(" ").trim();
+//                            } // if 
+                            i++;
+                        } // while
+                        i++;
+
+                        // Match 2 SOURCE (/^SOURCE:$/)
+                        while ( question.answerSources.length < 2 ) {
+                            // Parse first line of source
+                            answerSource = rows[i].cells.slice(1,rows[i].cells.length).join(" ");
+
+                            while ( ((i+1) <= rows.length-1) 
+                                    && ! rows[i+1].cells[0].match(/^SOURCE:$/) 
+                                    && ! rows[i+1].cells[0].match(/^\d+\.$/) ) {
+                                // Skip headers and footers
+//                                if ( isSkipHeaderFooter(rows[i+1]) ) {
+//                                    console.log(`skip line starting with: ${rows[i+1].cells[0]}`);
+//                                } else {
+                                    answerSource = answerSource.trim() + " " + rows[i+1].cells.join(" ").trim();
+//                                } // if 
+                                i++;
+                            } // while
+                            i++;
+                            question.answerSources.push(answerSource.trim());
+                        } // while
+                        question.answerSources[0] = question.answerSources[0].replaceAll("  ", " ").replaceAll(" - ", "-");
+                        question.answerSources[1] = question.answerSources[1].replaceAll("  ", " ").replaceAll(" - ", "-");
+                        question.answerText = question.answerText.replaceAll("  ", " ").replaceAll(" - ", "-");                        
+
+                        console.log(`${question.questionNum}: ${question.answerOpt}`);
+                        console.log(`${question.questionNum}: ${question.answerText}`);
+                        console.log(`${question.questionNum}: Source1: ${question.answerSources[0]}`);
+                        console.log(`${question.questionNum}: Source2: ${question.answerSources[1]}`);
+
+                    } else {
+                        // Discard line
+                        i++;
+                    } // if
+                } // while
+
+                // Format the rows as HTML for presentation
+                html = "";
+                // Loop thru each row
+                for ( i=0; i<questions.length; i++ ) {
+                    html += "<tr>";
+                    html += `<td>${questions[i].questionNum}</td>`;
+                    html += "<td><table>";
+                    html += `<tr><td>Question</td><td>${questions[i].questionText}</td></tr>`
+                    html += `<tr><td>A</td><td>${questions[i].choiceText.get('A')}</td></tr>`
+                    html += `<tr><td>B</td><td>${questions[i].choiceText.get('B')}</td></tr>`
+                    html += `<tr><td>C</td><td>${questions[i].choiceText.get('C')}</td></tr>`
+                    html += `<tr><td>D</td><td>${questions[i].choiceText.get('D')}</td></tr>`
+                    html += `<tr><td>AnswerOpt</td><td>${questions[i].answerOpt}</td></tr>`
+                    html += `<tr><td>AnswerText</td><td>${questions[i].answerText}</td></tr>`
+                    html += `<tr><td>Source1</td><td>${questions[i].answerSources[0]}</td></tr>`
+                    html += `<tr><td>Source2</td><td>${questions[i].answerSources[1]}</td></tr>`
+                    html += "</table></td>";
+                    html += "</tr>";
+                } // for
+                document.getElementById("questionTable").innerHTML = html;
+                showHide("questionTableSection", showQuestionTable);
+
+                // Save to global
+                window.questions = questions;
+            } // parseExam
+
+            function blankRow(pageNum) {
+                return { pageNum: pageNum,
+                                isFirstRowOfPage: false,
+                                isLastRowOfPage: false,
+                                isLastRowOfFile: false,
+                                cells: []
+                                };
+            } // newRow
+
+            // Check if row should be skipped based on content (e.g., header or footer)
+            function isSkipHeaderFooter(row) {
+                text = row.cells.join(" ");
+
+                // Looks like page header
+                if ( row.isFirstRowOfPage 
+                        && ( text.match(/^.*\sEXAM\s+\d+$/) || text.match(/^.*\sEXAM\s+[—-]\s+KEY\s+\d+$/) ) )
+                    return true;
+
+                // Looks like page footer
+                if ( row.isLastRowOfPage && text.match(/^Copyright\s+.*$/) )
+                    return true;
+                return false;
+            } // isSkipHeaderFooter
+
+            async function parsePdf(pdfDoc) {
+                // Retrieve line height and peek ahead for detecting multi-line cell entries
+                const lineMergeHeight = document.getElementById("lineMergeHeight").value;
+                const lineMergePeekAhead = document.getElementById("lineMergePeekAhead").value;
+                const showXY = document.getElementById("showXY").checked;
+                const showParsedTable = document.getElementById("showParsedTable").checked;
+
+                // Store
+                var rows = [];
+
+                // Loop thru each page
+                for (i=1; i<=pdfDoc.numPages; i++) {
+                    console.log(`Processing: page ${i} of ${pdfDoc.numPages}`);
+
+                    // Retrieve page and wait for completion
+                    const page = await pdfDoc.getPage(i);
+
+                    // Retrieve page content and wait for completion
+                    const textContent = await page.getTextContent();
+
+                    // Sort items by Y, then X since may be out of order
+                    var sortedItems = textContent.items.sort((a, b) => {
+                                            // Sort by Y descending (top-to-bottom), then by X ascending (left-to-right)
+                                            return (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]);
+                                        });
+
+                    // Do some row merging for multi-line entries if the y value has changed less than
+                    // a half line height
+                    for ( ixCurr=0; ixCurr<sortedItems.length; ixCurr++ ) {
+                        for ( ixPeek=ixCurr+1; ixPeek<sortedItems.length && ixPeek<ixCurr+lineMergePeekAhead; ixPeek++ ) {
+                            if ( sortedItems[ixCurr].transform[5] != sortedItems[ixPeek].transform[5]
+                                    && Math.abs(sortedItems[ixCurr].transform[5] - sortedItems[ixPeek].transform[5]) < lineMergeHeight ) {
+//console.log(`Merge line: (${sortedItems[ixCurr].transform[4]},${sortedItems[ixCurr].transform[5]}) to ${sortedItems[ixPeek].transform[5]} for ${sortedItems[ixCurr].str}`);                                        
+                                sortedItems[ixCurr].transform[5] = sortedItems[ixPeek].transform[5];
+                            } // if
+                        } // for
+                    } // for 
+
+                    // Re-sort items by Y, then X since Y may be out of order after merging
+                    sortedItems.sort((a, b) => {
+                                            // Sort by Y descending (top-to-bottom), then by X ascending (left-to-right)
+                                            return (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]);
+                                        });
+
+                    // Initialize for start of page handling
+                    let currY = sortedItems[0].transform[5];
+                    let currX = 0;
+                    let row = blankRow(i);
+                    row.isFirstRowOfPage = true;
+
+                    // Loop thru items and create rows
+                    sortedItems.forEach ( item => {
+                        // If Y change, assume line break
+                        if ( currY !== item.transform[5] ) {
+                            if ( row.cells.length > 0 ) {
+                                // Discard header/footer rows
+                                if ( isSkipHeaderFooter(row) ) {
+                                    console.log("discard row: " + row.cells.join(" "));
+                                } else
+                                    rows.push(row);
+                            } // if
+//                            console.log(row);
+                            row = blankRow(i);
+                        } // if
+
+                        // If no X or Y change, assume content in same cell
+                        if ( currX == item.transform[4] && currY == item.transform[5] ) {
+                            // Concatenate to last element in row
+                            row.cells[row.cells.length-1] = (row.cells[row.cells.length-1] + " " + item.str).trim();
+
+                        } else {
+                            // Append new element to row
+                            if ( showXY )
+                                row.cells.push(`(${item.transform[4]},${item.transform[5]}) ${item.str}`);
+                            else
+                                row.cells.push(item.str);
+                        } // if
+
+                        // Update current Y
+                        currX = item.transform[4];
+                        currY = item.transform[5];
+                    }); // 
+                    
+                    // Push last row
+                    if ( row.cells.length > 0 ) {
+                        // Mark last row of page
+                        row.isLastRowOfPage = true;
+
+                        // Discard header/footer rows
+                        if ( isSkipHeaderFooter(row) ) {
+                            console.log("discard row: " + row.cells.join(" "));
+                        } else
+                            rows.push( row );
+//                        console.log(row);
+                    } // if
+
+                    // Mark last row of page
+                    rows[rows.length-1].isLastRowOfPage = true;
+                } // for
+
+                // Mark last row of page
+                rows[rows.length-1].isLastRowOfFile = true;
+
+                // Format the rows as HTML for presentation
+                html = "";
+                // Loop thru each row
+                for ( i=0; i<rows.length; i++ ) {
+                    html += "<tr>";
+                    // Loop thru each column
+                    for ( j=0; j<rows[i].cells.length; j++ ) {
+                        html += `<td>${rows[i].cells[j]}</td>`;
+                    } // for
+                    html += "</tr>";
+                } // for
+                document.getElementById("parsedTable").innerHTML = html;
+                showHide("parsedTableSection", showParsedTable);
+
+                // Save to global
+                window.rows = rows;
+
+                // Parse the Exam
+                parseExam(rows);
+            } // parsePdf
+        
+            async function readPdf(fileObject) {
+                const reader = new FileReader();
+                reader.onload = async function() {
+                                    pdfContent = new Uint8Array(this.result);
+
+                                    // Load the PDF and wait for completion
+                                    const pdfDoc = await pdfjsLib.getDocument(pdfContent).promise;
+                                    parsePdf(pdfDoc);
+
+                                }
+
+                document.getElementById("resultPath").value = fileObject.name;
+                console.log(fileObject)
+                reader.readAsArrayBuffer(fileObject);
+            } // readPdf
+
+            async function loadPdf() {
+                // Retrieve PDF URL
+                const pdfUrl = document.getElementById("resultUrl").value;
+                console.log(`Loading: ${pdfUrl}`);
+
+                // Load the PDF and wait for completion
+                const pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+
+                parsePdf(pdfDoc);
+            } // loadPdf
+
+            function showHide(objectId, isShow) {
+                if ( isShow )
+                    document.getElementById(objectId).classList.remove("hidden")
+                else
+                    document.getElementById(objectId).classList.add("hidden")
+            } // showHide
+
+            function onModeChange(mode){
+            console.log("onModeChange:"+mode)
+                r=document.getElementById("progressionSetting")
+            if ( mode=="page"||mode=="scantron"){
+                r.classList.add("hidden")
+            }else{
+                r.classList.remove("hidden")
+            }
+            window.setting.mode=mode
+        }
+        function onConfirmationChange(mode){
+            console.log("onConfirmationChange:"+mode)
+                r=document.getElementById("informationSetting")
+            if ( mode=="end"){
+                r.classList.add("hidden")
+            }else{
+                r.classList.remove("hidden")
+            }            
+        }
+        function updateSliderValue(value){
+            r=document.getElementById("delaySliderValue")
+            r.textContent=value
+
+        }
+
+        function chooseAnswer(questionNumber, answerID, object){
+            window.questions[questionNumber].userChoice=answerID
+            isCorrect = (window.questions[questionNumber].answerOpt == window.questions[questionNumber].userChoice)
+
+            console.log(object)
+            if(isCorrect){
+                object.classList.add("correctAnswer")
+            }else{
+                object.classList.add('wrongAnswer')
+            }
+
+// Joshy: You had this.name instead of object.name
+
+            opt = document.getElementsByName(object.name)
+            console.log(object.name)
+            for(i=0;i<opt.length;i++) {
+                opt[i].classList.remove("selectableAnswer")
+                opt[i].removeAttribute("onclick")
+            }
+
+            /*if ( window.setting.mode == "page" ) {
+                // End of Exam
+                if ( window.setting.confirmation == "end" ) {
+
+                // Per Question
+                } else {
+
+                }
+            }*/
+        }
+
+        function drawQuestions(){
+// Format the rows as HTML for presentation
+                var html = "";
+                questions = window.questions
+                // Loop thru each row
+                for ( i=0; i<questions.length; i++ ) {
+                    html += "<tr>";
+                    html += `<td>${questions[i].questionNum}</td>`;
+                    html += "<td>";
+                        
+                    qhtml = "<table>";
+                    qhtml += `<tr><td>${questions[i].questionText}</td></tr>`
+                    qhtml += `<tr><td><button id="q${i}A" name="q${i}" class="answerButton selectableAnswer" onclick="chooseAnswer(${i},'A',this)">${questions[i].choiceText.get('A')}</button></td></tr>`
+                    qhtml += `<tr><td><button id="q${i}B" name="q${i}" class="answerButton selectableAnswer" onclick="chooseAnswer(${i},'B',this)">${questions[i].choiceText.get('B')}</button></td></tr>`
+                    qhtml += `<tr><td><button id="q${i}C" name="q${i}" class="answerButton selectableAnswer" onclick="chooseAnswer(${i},'C',this)">${questions[i].choiceText.get('C')}</button></td></tr>`
+                    qhtml += `<tr><td><button id="q${i}D" name="q${i}" class="answerButton selectableAnswer" onclick="chooseAnswer(${i},'D',this)">${questions[i].choiceText.get('D')}</button></td></tr>`
+//                    qhtml += `<tr><td>${questions[i].choiceText.get('D')}</td></tr>`
+//                    qhtml += `<tr><td>AnswerOpt</td><td>${questions[i].answerOpt}</td></tr>`
+//                    qhtml += `<tr><td>AnswerText</td><td>${questions[i].answerText}</td></tr>`
+//                    qhtml += `<tr><td>Source1</td><td>${questions[i].answerSources[0]}</td></tr>`
+//                    qhtml += `<tr><td>Source2</td><td>${questions[i].answerSources[1]}</td></tr>`
+                    qhtml += "</table>"
+                    
+                    html += qhtml + "</td>";
+                    html += "</tr>";
+                } // for
+                document.getElementById("examTable").innerHTML = html;
+                showHide("examTableSection", true);
+        }
+        </script>
+        <h1>DECA Exam Parser</h1>
+        <h2>Input</h2>
+        <table class="inputTable">
+            <tr>
+                <td>Exam URL</td>
+                <td><button onclick="loadPdf()" style="width:10%">Load URL</button> <input id="resultUrl" type="text" value="https://cdn.prod.website-files.com/635c470cc81318fc3e9c1e0e/69a1ed502b052b24e81259ae_BA%20Core-District%20Exam.pdf" style="width:85%"></td>
+            </tr>
+            <tr>
+                <td>Exam File</td>
+                <td><input id="resultFile" type="file" class="hidden" onchange="readPdf(this.files[0])" style="width:100%">
+                    <button onclick="document.getElementById('resultFile').click()" style="width:10%">Load File</button>
+                    <input id="resultPath" type="text" disabled style="width:85%">
+                </td>
+            </tr>
+            <tr>
+                <td>Show Debug</td>
+                <td><input id="showDebugTable" type="checkbox" onclick="showHide('debug',this.checked)" checked></td>
+            </tr>
+            <tr>
+            <td class="settingName">
+                Mode
+            </td>
+            <td class="settingOption">
+                <input type="radio" name="GUIMode" value="page" checked onclick="onModeChange(this.value)">Page</input>
+                <input type="radio" name="GUIMode" value="buttons" onclick="onModeChange(this.value)">Buttons</input>
+                <input type="radio" name="GUIMode" value="scantron" onclick="onModeChange(this.value)">Scantron</input>
+            </td>
+        </tr>
+        <tr>
+            <td class="settingName">
+                Confirmation
+            </td>
+            <td class="settingOption">
+                <input type="radio" name="ConfirmationMode" value="end" onclick="onConfirmationChange(this.value)" checked>End of Exam</input>
+                <input type="radio" name="ConfirmationMode" value="question" onclick="onConfirmationChange(this.value)">Per Question</input>
+            </td>
+        </tr>
+        <tr id="progressionSetting" class="hidden">
+            <td class="settingName">
+                Progression
+            </td>
+            <td class="settingOption">
+                <input type="radio" name="ProgressionMode" checked>Automatic</input>
+                <input type="radio" name="ProgressionMode">Manual</input>
+            </td>
+        </tr>
+        <tr id="informationSetting" class="hidden">
+            <td class="settingName">
+                Information
+            </td>
+            <td class="settingOption">
+                <input type="checkbox" id="ToggleAnswer">Answer</input>
+                <input type="checkbox" id="ToggleExplanation">Explanation</input><br>
+                <input type="checkbox" id="ToggleIA">IA/PI</input>
+                <input type="checkbox" id="ToggleSource">Source</input>
+            </td>
+        </tr>
+        <tr>
+            <td class="settingDelay">
+                Delay (ms)
+            </td>
+            <td>
+                <input id="delaySlider" type="range" min="0" max="10000" step="100" value="0" oninput="updateSliderValue(this.value)">
+                <output id="delaySliderValue">0</output>
+            </td>
+        </tr>
+        <tr>
+            <td class="settingName"></td>
+            <td class="settingOption">
+                <button id="drawButton" onclick="drawQuestions()"> Draw</button>
+            </td>
+        </tr>
+        </table>
+        <div id="debug">
+            <h2>Debug Options</h2>
+            <table class="debugTable">
+                <tr>
+                    <td>Line Merge Height<br>(e.g., 1/2 line height, 0 = disable)</td>
+                    <td><input id="lineMergeHeight" type="text" value="6"></td>
+                </tr>
+                <tr>
+                    <td>Line Merge Peek Ahead<br>(e.g., max cells in row * 2, 0 = disable)</td>
+                    <td><input id="lineMergePeekAhead" type="text" value="10"></td>
+                </tr>
+                <tr>
+                    <td>Show x,y co-ordinates</td>
+                    <td><input id="showXY" type="checkbox"></td>
+                </tr>
+                <tr>
+                    <td>Show Parsed Table</td>
+                    <td><input id="showParsedTable" type="checkbox" onclick="showHide('parsedTableSection',this.checked)"></td>
+                </tr>
+                <tr>
+                    <td>Show Question Table</td>
+                    <td><input id="showQuestionTable" type="checkbox" onclick="showHide('questionTableSection',this.checked)"></td>
+                </tr>
+            </table>
+        </div>
+        <h2>Output</h2>
+        <table class="inputTable">
+
+        </table>
+        <div id="parsedTableSection" class="hidden">
+            <h3>Parsed Table</h3>
+            <table id="parsedTable" class="outputTable">
+            </table>
+            <br>
+        </div>
+        <div id="questionTableSection" class="hidden">
+            <h3>Question Table</h3>
+            <table id="questionTable" class="outputTable">
+            </table>
+            <br>
+        </div>
+        <div id="examTableSection" class="hidden">
+            <h3>Question Table</h3>
+            <table id="examTable" class="examTable">
+            </table>
+            <br>
+        </div>
+        <pre id="examFileContent" style="display:none"></pre>
+    <div id="pageSection">
+        <table id="question1l">
+            <tr><td>Question</td></tr>
+            <tr><td><button class="answerButton" onclick="chooseAnswer(1,'A',this)">A. Answer 1</button></td>
+            <td><button class="answerButton" onclick="chooseAnswer(1,'B',this)">B. Answer 2</button></td></tr>
+            <tr><td><button class="answerButton" onclick="chooseAnswer(1,'C',this)">C. Answer 3</button></td>
+            <td><button class="answerButton" onclick="chooseAnswer(1,'D',this)">D. Answer 4</button></td></tr>
+        </table>
+    </div>
+    </body>
+</html>
